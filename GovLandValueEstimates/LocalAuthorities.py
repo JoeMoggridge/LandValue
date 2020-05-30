@@ -2,7 +2,8 @@ import matplotlib.pyplot as plt
 import geopandas as gpd
 import pandas as pd
 import numpy as np
-
+from fuzzywuzzy import fuzz
+from fuzzywuzzy import process
 
 
 def plot_df(df):
@@ -19,13 +20,13 @@ def plot_df(df):
     # add labels (which will be too small to see unless we zoom in)
     font_scale = 0  # we set the font size to zero here. It will be set to a non-zero value if we zoom in.
     annotations = []
-    df['middle'] = df['geometry'].copy().apply(lambda x: x.representative_point().coords[:])
+    df['middle'] = df['geometry'].copy().apply(lambda x:  x.representative_point().coords[:])
     df['middle'] = [middle[0] for middle in df['middle']]
     for idx, row in df.iterrows():
         text = idx.replace(' ', '\n')
         annotations.append(
-            plt.annotate(s=text, xy=row['middle'], horizontalalignment='center', fontsize=font_scale, visible=False)
-        )
+            plt.annotate(s=text, xy=row['middle'], horizontalalignment='center', fontsize=font_scale, visible=False))
+
     ax.callbacks.connect('xlim_changed', on_xlims_change)
     df.drop(columns='middle', inplace=True)
 
@@ -44,20 +45,34 @@ def on_xlims_change(ax):
                 horizontalalignment='center', fontsize=font_scale, visible=show_annotations)
             child.remove()
 
+def fuzzy_merge(df_1, df_2, key1, key2, threshold=90, limit=1):
+    """
+    :param df_1: the left table to join
+    :param df_2: the right table to join
+    :param key1: key column of the left table
+    :param key2: key column of the right table
+    :param threshold: how close the matches should be to return a match, based on Levenshtein distance
+    :param limit: the amount of matches that will get returned, these are sorted high to low
+    :return: dataframe with boths keys and matches
+    """
+    s = df_2[key2].tolist()
+
+    m = df_1[key1].apply(lambda x: process.extract(x, s, limit=limit))
+    df_1['matches'] = m
+
+    m2 = df_1['matches'].apply(lambda x: ', '.join([i[0] for i in x if i[1] >= threshold]))
+    confidence = df_1['matches'].apply(lambda x: x[0][1])
+    df_1['matches'] = m2
+    df_1['confidence'] = confidence
+
+
+    return df_1.merge(df_2, left_on='matches', right_on=key2, how='left')
 
 if __name__ == '__main__':
 
     LA = gpd.read_file('Local_Authority_Districts__December_2017__Boundaries_in_Great_Britain-shp'
                        '\\Local_Authority_Districts__December_2017__Boundaries_in_Great_Britain.shp')
-
-    # tweak the names so we get more matches
-    for i in range(len(LA)):
-        LA.lad17nm[i] = LA.lad17nm[i].split(',')[0].strip()  # drop anything after a comma
-        LA.lad17nm[i] = LA.lad17nm[i].replace('South Bucks', 'South Buckinghamshire')
-        LA.lad17nm[i] = LA.lad17nm[i].replace('Newcastle upon Tyne', 'Newcastle-upon-Tyne')
-
-
-    LA.set_index('lad17nm', inplace=True)
+    LA = LA[['lad17nm', 'long', 'lat', 'geometry']]  # we only care about some columns
 
     # Ideally I would only parse column D when reading this file.
     # However, I can't figure out the correct syntax for that, so I'll just disgard the unneccassary columns.
@@ -65,23 +80,20 @@ if __name__ == '__main__':
                            names=['Unamed', 'Region', 'Local authority', '£/ha'])
     prices = prices.drop(columns={'Unamed', 'Region'})
     prices = prices.loc[prices.index.dropna()]  # drop 'Nan' indexed rows.
-
-    # tweak the names so that we get more matches
     prices.reset_index(inplace=True)
+
+    #cut out a  whole load of annoying brackets that mess things up
     for i in range(len(prices)):
         prices.loc[i, 'Local authority'] = prices.loc[i, 'Local authority'].split('(')[0].strip()
-        prices.loc[i, 'Local authority'] = prices.loc[i, 'Local authority'].replace('&', 'and')
-        prices.loc[i, 'Local authority'] = prices.loc[i, 'Local authority'].replace('Bromley London', 'Bromley')
-        prices.loc[i, 'Local authority'] = prices.loc[i, 'Local authority'].replace('Kings Lynn', "King's Lynn")
-        prices.loc[i, 'Local authority'] = prices.loc[i, 'Local authority'].replace('Broxstowe', "Broxtowe")
-        prices.loc[i, 'Local authority'] = prices.loc[i, 'Local authority'].replace('Durham', "County Durham")
-        prices.loc[i, 'Local authority'] = prices.loc[i, 'Local authority'].replace('St. Helens', "St Helens")
 
-    prices.set_index('Local authority', inplace=True)
+    joined = fuzzy_merge(LA, prices, 'lad17nm', 'Local authority')
 
-    joined = LA.join(prices)
+    # for debugging purposes, save the data frame.
+    joined.to_csv('joined.csv', '|')
 
     # scale by factor of 1 million
     joined['£/ha'] = joined['£/ha']/1e6
 
+    # plot_df expects dataframe indexed by county.
+    joined.set_index('lad17nm', inplace=True)
     plot_df(joined)
