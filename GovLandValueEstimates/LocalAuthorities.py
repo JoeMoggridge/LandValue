@@ -1,9 +1,16 @@
+# coding=<utf-8>
+
+import os
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import pandas as pd
 import numpy as np
 from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
+import re
+
+shp_use_year = 2019 # This setting defines which shapefiles will be referenced. Available are 2019 or 2017.
+                    # Note that the 2017 files included in the github repo appear to be corrupted, so 2019 is probably the way to go.
 
 
 def plot_df(df):
@@ -70,9 +77,31 @@ def fuzzy_merge(df_1, df_2, key1, key2, threshold=90, limit=1):
 
 if __name__ == '__main__':
 
-    LA = gpd.read_file('Local_Authority_Districts__December_2017__Boundaries_in_Great_Britain-shp'
-                       '\\Local_Authority_Districts__December_2017__Boundaries_in_Great_Britain.shp')
-    LA = LA[['lad17nm', 'long', 'lat', 'geometry']]  # we only care about some columns
+    if shp_use_year == 2019:
+        # Somehow the filename has a breaking space in it. So, we dynamically search to get the correct name.
+        os.chdir(os.path.dirname(os.getcwd()))
+        os.chdir('Local_Authority_Districts_(December_2019)_Boundaries_UK_BFC')
+        pattern = re.compile(".+\.shp$")
+        for str in os.listdir():
+            match = re.search(pattern, str)
+            if not match is None:
+                break
+        #os.chdir(os.path.dirname(os.getcwd()))
+
+        laColumnName = 'lad19nm'
+
+        shp_filename =  match.group()
+        #'Local_Authority_Districts_(December_2019)_Boundaries_UK_BFC\\' +
+        # 'Local_Authority_Districts_(December_2019)_Boundaries_UK_BFC.shp'
+
+    elif shp_use_year == 2017:
+        shp_filename = 'Local_Authority_Districts__December_2017__Boundaries_in_Great_Britain-shp\\' \
+                       'Local_Authority_Districts__December_2017__Boundaries_in_Great_Britain.shp'
+    else:
+        raise("shp_use_ year must be either '2019' or '2017', found "+ shp_use_year)
+
+    LA = gpd.read_file( shp_filename)
+    LA = LA[[laColumnName, 'long', 'lat', 'geometry']]  # we only care about some columns
 
     # Ideally I would only parse column D when reading this file.
     # However, I can't figure out the correct syntax for that, so I'll just disgard the unneccassary columns.
@@ -95,5 +124,5 @@ if __name__ == '__main__':
     joined['£/ha'] = joined['£/ha']/1e6
 
     # plot_df expects dataframe indexed by county.
-    joined.set_index('lad17nm', inplace=True)
+    joined.set_index(laColumnName, inplace=True)
     plot_df(joined)
